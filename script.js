@@ -153,6 +153,57 @@ function newGame(n, faceCount) {
 }
 
 // ---------------------------------------------------------------------------
+// Sauvegarde automatique dans le localStorage du navigateur
+// ---------------------------------------------------------------------------
+
+const SAVE_KEY = "cube-tetravex-save";
+
+function saveGame() {
+  const state = {
+    grid,
+    faceCount: faces.length,
+    faces: faces.map((face) => ({ cells: face.cells, solution: face.solution })),
+    start: startBoard.cells,
+  };
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(state));
+  } catch (e) {
+    // Stockage indisponible (navigation privée, quota...) : on joue sans sauvegarde
+  }
+}
+
+// Restaure la partie sauvegardée ; renvoie false s'il n'y en a pas de valide
+function loadGame() {
+  let state;
+  try {
+    state = JSON.parse(localStorage.getItem(SAVE_KEY));
+  } catch (e) {
+    return false;
+  }
+  if (!state || ![1, 2, 3, 4].includes(state.grid) || ![3, 6].includes(state.faceCount)) {
+    return false;
+  }
+  const n = state.grid;
+  const cellsOk = (cells, length) => Array.isArray(cells) && cells.length === length;
+  if (!cellsOk(state.faces, state.faceCount) || !cellsOk(state.start, state.faceCount * n * n) ||
+      !state.faces.every((f) => cellsOk(f.cells, n * n) && cellsOk(f.solution, n * n))) {
+    return false;
+  }
+
+  setupBoards(n, state.faceCount);
+  faces.forEach((face, i) => {
+    face.cells = state.faces[i].cells;
+    face.solution = state.faces[i].solution;
+  });
+  startBoard.cells = state.start;
+  selected = null;
+  rejected = null;
+  hint = [];
+  message = isSolved() ? "Bravo, le cube est résolu !" : "";
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // Règles
 // ---------------------------------------------------------------------------
 
@@ -491,6 +542,7 @@ canvas.addEventListener("click", (event) => {
   } else if (selected.board === hit.board && selected.index === hit.index) {
     selected = null;
   } else if (tryMove(selected, hit)) {
+    saveGame();
     selected = null;
     hint = [];
     message = isSolved() ? "Bravo, le cube est résolu !" : "";
@@ -514,6 +566,7 @@ function startNewGame() {
   const size = Number(document.getElementById("size").value);
   const faceCount = Number(document.getElementById("mode").value);
   newGame(size, faceCount);
+  saveGame();
 }
 
 document.getElementById("new-game").addEventListener("click", () => {
@@ -528,5 +581,12 @@ function resize() {
 }
 
 window.addEventListener("resize", resize);
-startNewGame();
+
+// Reprend la partie sauvegardée s'il y en a une, sinon en commence une nouvelle
+if (loadGame()) {
+  document.getElementById("size").value = String(grid);
+  document.getElementById("mode").value = String(faces.length);
+} else {
+  startNewGame();
+}
 resize();
