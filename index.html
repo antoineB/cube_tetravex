@@ -35,7 +35,14 @@
       font: bold 18px sans-serif;
       border-radius: 6px;
     }
-    #buttons button:hover {
+    #buttons button.active {
+      background: #ffe650;
+    }
+    #buttons button:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+    #buttons button:hover:not(:disabled):not(.active) {
       background: #7fe3ff;
     }
   </style>
@@ -55,6 +62,7 @@
     </select>
     <button id="new-game">Nouvelle partie</button>
     <button id="hint">Indice</button>
+    <button id="transparency" title="Voir le cube entier en transparence (6 faces)">Transparence</button>
   </div>
   <script src="script.js"></script>
 </body>

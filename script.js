@@ -335,6 +335,10 @@ function layout() {
       u: project(face.u, zero),
       v: project(face.v, zero),
     };
+    // Position de la face dans l'autre vue, pour le mode transparence
+    if (views === 2) {
+      face.otherScreen = { ...face.screen, origin: project(face.origin, centers[1 - face.view]) };
+    }
   });
 
   // Nom des vues, affiché sous chaque cube quand il y en a deux
@@ -382,6 +386,7 @@ let animations = [];   // tuiles en mouvement : { tile, from, to, start }
 let confetti = [];     // particules de l'effet de victoire
 let message = "";
 let hint = [];         // [{ board, index, color }] : cases mises en évidence par l'indice
+let transparency = false; // mode 6 faces : voir le cube entier en transparence
 
 const MOVE_DURATION = 250;   // ms
 const SHAKE_DURATION = 450;  // ms
@@ -579,7 +584,23 @@ function hoverLinks() {
   ];
 }
 
-function drawBoard(board, now, targets, links) {
+// Mode transparence : dessine les tuiles d'une face en filigrane, à sa place
+// dans l'autre vue (les deux vues partagent la même projection).
+function drawFiligree(face, alpha) {
+  const { origin, u, v } = face.otherScreen;
+  ctx.save();
+  ctx.setTransform(u.x / TILE, u.y / TILE, v.x / TILE, v.y / TILE, origin.x, origin.y);
+  ctx.globalAlpha = alpha;
+  face.cells.forEach((tile, i) => {
+    if (tile && !isHidden(face, i)) drawTile(tile, i % face.cols, Math.floor(i / face.cols));
+  });
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "#888";
+  ctx.strokeRect(0, 0, face.cols * TILE, face.rows * TILE);
+  ctx.restore();
+}
+
+function drawBoard(board, now, targets, links, tileAlpha = 1) {
   const { origin, u, v } = board.screen;
   ctx.setTransform(u.x / TILE, u.y / TILE, v.x / TILE, v.y / TILE, origin.x, origin.y);
 
@@ -594,14 +615,16 @@ function drawBoard(board, now, targets, links) {
       offset = Math.sin(t * Math.PI * 6) * 12 * (1 - t);
     }
     ctx.translate(offset, 0);
+    ctx.globalAlpha = tileAlpha;
     if (tile && !isHidden(board, i)) drawTile(tile, col, row);
     else drawEmptyCell(col, row);
+    ctx.globalAlpha = 1;
     ctx.translate(-offset, 0);
   });
 
   // Ombrage pour donner du relief au cube
   if (board.shade > 0) {
-    ctx.fillStyle = `rgba(0, 0, 0, ${board.shade})`;
+    ctx.fillStyle = `rgba(0, 0, 0, ${board.shade * tileAlpha})`;
     ctx.fillRect(0, 0, board.cols * TILE, board.rows * TILE);
   }
 
@@ -699,7 +722,18 @@ function draw(now = performance.now()) {
 
   const targets = validTargets();
   const links = hoverLinks();
-  boards.forEach((board) => drawBoard(board, now, targets, links));
+  if (transparency && faces.length === 6) {
+    // Vue extérieure : les faces du fond apparaissent à travers les faces
+    // avant, rendues translucides. Vue intérieure : les faces avant sont
+    // dessinées en filigrane devant les faces du fond.
+    faces.filter((f) => f.view === 1).forEach((f) => drawFiligree(f, 0.35));
+    faces.filter((f) => f.view === 0).forEach((f) => drawBoard(f, now, targets, links, 0.75));
+    faces.filter((f) => f.view === 1).forEach((f) => drawBoard(f, now, targets, links));
+    faces.filter((f) => f.view === 0).forEach((f) => drawFiligree(f, 0.2));
+    drawBoard(startBoard, now, targets, links);
+  } else {
+    boards.forEach((board) => drawBoard(board, now, targets, links));
+  }
 
   // Tuiles en mouvement vers leur nouvelle case
   animations.forEach((a) => {
@@ -849,12 +883,39 @@ document.getElementById("hint").addEventListener("click", () => {
   draw();
 });
 
+// Bouton transparence : utile seulement avec les 6 faces (2 vues)
+const TRANSPARENCY_KEY = "cube-tetravex-transparency";
+const transparencyButton = document.getElementById("transparency");
+
+function updateTransparencyButton() {
+  transparencyButton.disabled = faces.length !== 6;
+  transparencyButton.classList.toggle("active", transparency);
+}
+
+try {
+  transparency = localStorage.getItem(TRANSPARENCY_KEY) === "1";
+} catch (e) {
+  // Stockage indisponible : transparence désactivée par défaut
+}
+
+transparencyButton.addEventListener("click", () => {
+  transparency = !transparency;
+  try {
+    localStorage.setItem(TRANSPARENCY_KEY, transparency ? "1" : "0");
+  } catch (e) {
+    // Préférence non mémorisée
+  }
+  updateTransparencyButton();
+  requestDraw();
+});
+
 // Lance une partie avec la taille et le mode choisis dans les listes
 function startNewGame() {
   const size = Number(document.getElementById("size").value);
   const faceCount = Number(document.getElementById("mode").value);
   newGame(size, faceCount);
   saveGame();
+  updateTransparencyButton();
 }
 
 document.getElementById("new-game").addEventListener("click", () => {
@@ -874,6 +935,7 @@ window.addEventListener("resize", resize);
 if (loadGame()) {
   document.getElementById("size").value = String(grid);
   document.getElementById("mode").value = String(faces.length);
+  updateTransparencyButton();
 } else {
   startNewGame();
 }
