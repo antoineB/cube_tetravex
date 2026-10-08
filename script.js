@@ -11,22 +11,40 @@ const COLORS = [
 ];
 
 // ---------------------------------------------------------------------------
-// Plateaux : les 3 faces du cube et la grille de départ.
+// Plateaux : les faces du cube et la grille de départ.
 // Chaque face est placée dans l'espace 3D du cube (coordonnées 0..grid) :
 // la case (col, row) a pour coin origin + col * u + row * v.
 // Les dimensions sont fixées par setupBoards() au début de chaque partie.
 // ---------------------------------------------------------------------------
 
-const faces = [
+// Faces visibles depuis le coin (grid, grid, grid) : vue 0
+const FRONT_FACES = [
   { name: "top", shade: 0, corner: [0, 0, 1], u: [1, 0, 0], v: [0, 1, 0] },
   { name: "left", shade: 0.2, corner: [0, 1, 1], u: [1, 0, 0], v: [0, 0, -1] },
   { name: "right", shade: 0.35, corner: [1, 1, 1], u: [0, -1, 0], v: [0, 0, -1] },
-].map((face) => ({ ...face, cube: true }));
+];
 
-// Grille de départ : 3*grid colonnes x grid lignes = toutes les tuiles du cube
+// Vue 1 : l'intérieur du cube, vu sous le même angle que la vue 0 mais sans
+// les 3 faces avant. On voit le sol (z = 0) et les deux murs du fond (x = 0,
+// y = 0), chacun à l'emplacement exact qu'il occupe derrière les faces avant.
+// Les axes u, v sont choisis pour que les cases ne soient pas retournées à
+// l'écran (u x v pointe vers l'intérieur, puisqu'on les regarde de dedans).
+const BACK_FACES = [
+  { name: "floor", shade: 0.1, corner: [0, 0, 0], u: [1, 0, 0], v: [0, 1, 0] },
+  { name: "back-left", shade: 0.3, corner: [0, 1, 1], u: [0, -1, 0], v: [0, 0, -1] },
+  { name: "back-right", shade: 0.45, corner: [0, 0, 1], u: [1, 0, 0], v: [0, 0, -1] },
+];
+
+const ALL_FACES = [
+  ...FRONT_FACES.map((face) => ({ ...face, view: 0, cube: true })),
+  ...BACK_FACES.map((face) => ({ ...face, view: 1, cube: true })),
+];
+
+// Grille de départ : (nombre de faces * grid) colonnes x grid lignes
 const startBoard = { name: "start", shade: 0, cube: false };
 
-const boards = [...faces, startBoard];
+let faces = [];   // faces utilisées dans la partie (3 ou 6)
+let boards = [];  // faces + grille de départ
 
 // Point 3D d'une face en coordonnées de case (col, row)
 function facePoint(face, col, row) {
@@ -56,15 +74,17 @@ function cellEdges(face, index) {
 // Les arêtes communes à deux faces du cube relient des cases de faces différentes.
 const edgeMap = new Map();
 
-function setupBoards(n) {
+function setupBoards(n, faceCount) {
   grid = n;
+  faces = ALL_FACES.slice(0, faceCount);
+  boards = [...faces, startBoard];
   faces.forEach((face) => {
     face.origin = face.corner.map((k) => k * n);
     face.cols = n;
     face.rows = n;
     face.cells = Array(n * n).fill(null);
   });
-  startBoard.cols = 3 * n;
+  startBoard.cols = faceCount * n;
   startBoard.rows = n;
 
   edgeMap.clear();
@@ -122,8 +142,8 @@ function generateTiles() {
   return shuffle(tiles);
 }
 
-function newGame(n) {
-  setupBoards(n);
+function newGame(n, faceCount) {
+  setupBoards(n, faceCount);
   faces.forEach((face) => (face.solution = []));
   startBoard.cells = generateTiles();
   selected = null;
@@ -228,19 +248,33 @@ function layout() {
   const w = canvas.width;
   const h = canvas.height;
 
-  // Le cube en haut (hauteur 2*grid cases), la grille de départ en bas
-  // (grid lignes), avec des marges.
-  const L = Math.min(h / (2 * grid + startBoard.rows + 2), w / (startBoard.cols + 1));
-  const margin = L / 2;
-
-  // Projection isométrique : le coin caché du cube se projette sur center
+  // Une ou deux vues du cube en haut (hauteur 2*grid cases, largeur
+  // 2*grid*cos30 cases chacune, séparées d'une case), la grille de départ en
+  // bas (grid lignes). On garde une bande en haut pour les boutons.
   const cos30 = Math.cos(Math.PI / 6);
+  const views = faces.length / 3;
+  // Les écarts (GAP cases) laissent la place aux nombres attendus autour des cubes
+  const GAP = 1.5;
+  const cubesWidth = views * 2 * grid * cos30 + (views - 1) * GAP;
+  const L = Math.min(
+    (h - 64 - 16) / (2 * grid + GAP + startBoard.rows + 0.5),
+    w / (Math.max(cubesWidth, startBoard.cols) + 1)
+  );
+  const top = 64 + L / 2;
+
+  // Projection isométrique, la même pour les deux vues : les coins (0, 0, 0)
+  // et (grid, grid, grid) se projettent tous deux sur le centre de la vue.
   const axes = [
     { x: L * cos30, y: L / 2 },  // axe x du cube (vers la droite-bas)
     { x: -L * cos30, y: L / 2 }, // axe y du cube (vers la gauche-bas)
     { x: 0, y: -L },             // axe z du cube (vers le haut)
   ];
-  const center = { x: w / 2, y: margin + grid * L };
+  const centerY = top + grid * L;
+  const step = 2 * grid * cos30 * L + GAP * L; // écart entre les centres des deux vues
+  const centers = Array.from({ length: views }, (_, i) => ({
+    x: w / 2 + (i - (views - 1) / 2) * step,
+    y: centerY,
+  }));
   const project = (p, base) => ({
     x: base.x + p[0] * axes[0].x + p[1] * axes[1].x + p[2] * axes[2].x,
     y: base.y + p[0] * axes[0].y + p[1] * axes[1].y + p[2] * axes[2].y,
@@ -249,19 +283,27 @@ function layout() {
 
   faces.forEach((face) => {
     face.screen = {
-      origin: project(face.origin, center),
+      origin: project(face.origin, centers[face.view]),
       u: project(face.u, zero),
       v: project(face.v, zero),
     };
   });
 
+  // Nom des vues, affiché sous chaque cube quand il y en a deux
+  const labels = views === 2
+    ? [
+        { text: "Vue extérieure", x: centers[0].x, y: centerY + grid * L + L },
+        { text: "Vue intérieure", x: centers[1].x, y: centerY + grid * L + L },
+      ]
+    : [];
+
   startBoard.screen = {
-    origin: { x: (w - startBoard.cols * L) / 2, y: center.y + grid * L + L },
+    origin: { x: (w - startBoard.cols * L) / 2, y: centerY + grid * L + GAP * L },
     u: { x: L, y: 0 },
     v: { x: 0, y: L },
   };
 
-  return { L, margin };
+  return { L, labels };
 }
 
 // Retrouve la case sous un point écran en inversant la transformation du plateau
@@ -345,6 +387,40 @@ function outlineCell(index, cols, color) {
   ctx.strokeRect(x + 5, y + 5, TILE - 10, TILE - 10);
 }
 
+// Pour chaque bord d'une case : position de la case fantôme voisine (dc, dr)
+// et le triangle de cette case qui touche le bord.
+const GHOST_TRIANGLES = {
+  top: [0, -1, [TILE, TILE], [0, TILE]],
+  right: [1, 0, [0, TILE], [0, 0]],
+  bottom: [0, 1, [0, 0], [TILE, 0]],
+  left: [-1, 0, [TILE, 0], [TILE, TILE]],
+};
+
+// En face des bords d'une face dont la voisine est dans l'autre vue, dessine
+// en transparence la partie de la tuile voisine qui touche ce bord.
+// À appeler dans le repère local de la face.
+function drawGhostNeighbors(face) {
+  ctx.save();
+  ctx.font = "bold 24px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  face.cells.forEach((_, index) => {
+    neighbors(face, index)
+      .filter((n) => n.face.view !== face.view && n.face.cells[n.index])
+      .forEach((n) => {
+        const value = n.face.cells[n.index][n.otherSide];
+        const [dc, dr, p1, p2] = GHOST_TRIANGLES[n.side];
+        const x = ((index % face.cols) + dc) * TILE;
+        const y = (Math.floor(index / face.cols) + dr) * TILE;
+        ctx.globalAlpha = 0.45;
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "#222";
+        drawTriangle(x, y, p1, p2, value);
+      });
+  });
+  ctx.restore();
+}
+
 function drawBoard(board) {
   const { origin, u, v } = board.screen;
   ctx.setTransform(u.x / TILE, u.y / TILE, v.x / TILE, v.y / TILE, origin.x, origin.y);
@@ -362,6 +438,8 @@ function drawBoard(board) {
     ctx.fillRect(0, 0, board.cols * TILE, board.rows * TILE);
   }
 
+  if (board.cube) drawGhostNeighbors(board);
+
   hint
     .filter((h) => h.board === board)
     .forEach((h) => outlineCell(h.index, board.cols, h.color));
@@ -376,19 +454,24 @@ function drawBoard(board) {
 }
 
 function draw() {
-  const { L, margin } = layout();
+  const { L, labels } = layout();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = "#222";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   boards.forEach(drawBoard);
 
+  const fontSize = Math.round(Math.min(L * 0.4, 24));
+  ctx.fillStyle = "#fff";
+  ctx.font = `bold ${fontSize}px sans-serif`;
+  ctx.textBaseline = "middle";
+
+  ctx.textAlign = "center";
+  labels.forEach((label) => ctx.fillText(label.text, label.x, label.y));
+
   if (message) {
-    ctx.fillStyle = "#fff";
-    ctx.font = `bold ${Math.round(L * 0.4)}px sans-serif`;
     ctx.textAlign = "left";
-    ctx.textBaseline = "top";
-    ctx.fillText(message, margin, margin);
+    ctx.fillText(message, 16, 36);
   }
 }
 
@@ -426,8 +509,15 @@ document.getElementById("hint").addEventListener("click", () => {
   draw();
 });
 
+// Lance une partie avec la taille et le mode choisis dans les listes
+function startNewGame() {
+  const size = Number(document.getElementById("size").value);
+  const faceCount = Number(document.getElementById("mode").value);
+  newGame(size, faceCount);
+}
+
 document.getElementById("new-game").addEventListener("click", () => {
-  newGame(Number(document.getElementById("size").value));
+  startNewGame();
   draw();
 });
 
@@ -438,5 +528,5 @@ function resize() {
 }
 
 window.addEventListener("resize", resize);
-newGame(Number(document.getElementById("size").value));
+startNewGame();
 resize();
