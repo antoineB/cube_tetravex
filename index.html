@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -95,26 +95,26 @@
 <body>
   <canvas id="canvas"></canvas>
   <div id="buttons">
-    <select id="mode" title="Mode de jeu">
+    <select id="mode" title="Game mode">
       <option value="3" selected>3 faces</option>
-      <option value="6">6 faces (2 vues)</option>
+      <option value="6">6 faces (2 views)</option>
     </select>
-    <select id="size" title="Taille d'une face du cube">
+    <select id="size" title="Size of a cube face">
       <option value="1">1x1</option>
       <option value="2">2x2</option>
       <option value="3" selected>3x3</option>
       <option value="4">4x4</option>
     </select>
-    <button id="new-game">Nouvelle partie</button>
-    <button id="hint">Indice</button>
-    <button id="transparency" title="Voir le cube entier en transparence (6 faces)">Transparence</button>
+    <button id="new-game">New game</button>
+    <button id="hint">Hint</button>
+    <button id="transparency" title="See the whole cube through transparent faces (6 faces)">Transparency</button>
     <details id="options">
       <summary>Options</summary>
       <div class="panel">
-        <label><input type="checkbox" data-option="hoverLinks"> Voisines au survol</label>
-        <label><input type="checkbox" data-option="validTargets"> Placements possibles</label>
-        <label><input type="checkbox" data-option="ghostNeighbors"> Tuiles voisines en bordure</label>
-        <label><input type="checkbox" data-option="sound"> Sons</label>
+        <label><input type="checkbox" data-option="hoverLinks"> Neighbors on hover</label>
+        <label><input type="checkbox" data-option="validTargets"> Possible placements</label>
+        <label><input type="checkbox" data-option="ghostNeighbors"> Neighbor tiles on borders</label>
+        <label><input type="checkbox" data-option="sound"> Sounds</label>
       </div>
     </details>
   </div>

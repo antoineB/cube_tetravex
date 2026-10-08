@@ -195,7 +195,7 @@ function loadGame() {
   });
   startBoard.cells = state.start;
   resetUiState();
-  message = isSolved() ? "Bravo, le cube est résolu !" : "";
+  message = isSolved() ? "Well done, the cube is solved!" : "";
   return true;
 }
 
@@ -264,7 +264,7 @@ function computeHint() {
   const wrong = placed.filter((c) => !sameTile(c.board.cells[c.index], c.board.solution[c.index]));
 
   if (wrong.length > 0) {
-    return { cells: [{ ...randomItem(wrong), color: "#ff9a1f" }], text: "Indice : cette tuile est mal placée." };
+    return { cells: [{ ...randomItem(wrong), color: "#ff9a1f" }], text: "Hint: this tile is in the wrong place." };
   }
 
   let targets;
@@ -277,13 +277,13 @@ function computeHint() {
         neighbors(c.board, c.index).some((n) => n.face.cells[n.index])
     );
   }
-  if (targets.length === 0) return { cells: [], text: "Le cube est déjà résolu !" };
+  if (targets.length === 0) return { cells: [], text: "The cube is already solved!" };
 
   const target = randomItem(targets);
   const source = findTileFor(target);
   return {
     cells: [{ ...source, color: "#2fd0ff" }, { ...target, color: "#2fd0ff" }],
-    text: "Indice : placez la tuile entourée en bleu sur la case bleue du cube.",
+    text: "Hint: place the tile outlined in blue on the blue cell of the cube.",
   };
 }
 
@@ -344,8 +344,8 @@ function layout() {
   // Nom des vues, affiché sous chaque cube quand il y en a deux
   const labels = views === 2
     ? [
-        { text: "Vue extérieure", x: centers[0].x, y: centerY + grid * L + L },
-        { text: "Vue intérieure", x: centers[1].x, y: centerY + grid * L + L },
+        { text: "Outside view", x: centers[0].x, y: centerY + grid * L + L },
+        { text: "Inside view", x: centers[1].x, y: centerY + grid * L + L },
       ]
     : [];
 
@@ -872,7 +872,7 @@ function playMove(src, dst, fromTransform) {
     selected = null;
     hint = [];
     if (isSolved()) {
-      message = "Bravo, le cube est résolu !";
+      message = "Well done, the cube is solved!";
       launchConfetti(now);
       playSound("win");
     } else {
@@ -882,7 +882,7 @@ function playMove(src, dst, fromTransform) {
   } else {
     shake = { ...dst, start: now };
     playSound("refuse");
-    message = "Mouvement refusé : les nombres ne correspondent pas.";
+    message = "Move rejected: the numbers do not match.";
     // Une tuile glissée retourne à sa case
     if (drag && drag.moved) animations.push({ tile: a, from: fromTransform, to: src, start: now });
   }
