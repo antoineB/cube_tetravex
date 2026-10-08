@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cube Tetravex</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #222;
+    }
+    canvas {
+      display: block;
+    }
+    #buttons {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      display: flex;
+      gap: 8px;
+    }
+    #buttons button {
+      padding: 8px 20px;
+      font: bold 18px sans-serif;
+      color: #111;
+      background: #2fd0ff;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    #buttons select {
+      padding: 8px;
+      font: bold 18px sans-serif;
+      border-radius: 6px;
+    }
+    #buttons button:hover {
+      background: #7fe3ff;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div id="buttons">
+    <select id="size" title="Taille d'une face du cube">
+      <option value="1">1x1</option>
+      <option value="2">2x2</option>
+      <option value="3" selected>3x3</option>
+      <option value="4">4x4</option>
+    </select>
+    <button id="new-game">Nouvelle partie</button>
+    <button id="hint">Indice</button>
+  </div>
+  <script src="script.js"></script>
+</body>
+</html>
