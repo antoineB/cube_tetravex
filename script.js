@@ -393,6 +393,7 @@ const options = {
   hoverLinks: false,     // survol : voisines dans l'autre vue
   validTargets: false,   // cases où la tuile sélectionnée peut être posée
   ghostNeighbors: true,  // tuiles voisines en transparence au bord des faces
+  sound: true,           // effets sonores
 };
 
 const MOVE_DURATION = 250;   // ms
@@ -447,6 +448,82 @@ function isHidden(board, index) {
 function validTargets() {
   if (!selected) return [];
   return cubeCells().filter((c) => !sameCell(c, selected) && tryMove(selected, c, true));
+}
+
+// ---------------------------------------------------------------------------
+// Sons : synthétisés avec la Web Audio API, sans fichier audio.
+// Le contexte audio est créé au premier son, donc après une action du joueur
+// (les navigateurs bloquent le son avant toute interaction).
+// ---------------------------------------------------------------------------
+
+let audioCtx = null;
+
+function getAudio() {
+  if (!audioCtx) {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return null;
+    audioCtx = new AudioContextClass();
+  }
+  if (audioCtx.state === "suspended") audioCtx.resume();
+  return audioCtx;
+}
+
+// Une note courte avec une enveloppe attaque / décroissance
+function tone(audio, freq, duration, { type = "sine", volume = 0.2, delay = 0, slideTo = null } = {}) {
+  const start = audio.currentTime + delay;
+  const osc = audio.createOscillator();
+  const gain = audio.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, start);
+  if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, start + duration);
+  gain.gain.setValueAtTime(0.0001, start);
+  gain.gain.exponentialRampToValueAtTime(volume, start + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+  osc.connect(gain).connect(audio.destination);
+  osc.start(start);
+  osc.stop(start + duration + 0.02);
+}
+
+const SOUNDS = {
+  // Tuile prise (sélection ou début de glisser)
+  pick: (a) => tone(a, 700, 0.06, { type: "triangle", volume: 0.12 }),
+  // Tuile posée sur une case vide
+  place: (a) => {
+    tone(a, 240, 0.09, { type: "triangle", volume: 0.25, slideTo: 170 });
+    tone(a, 900, 0.04, { volume: 0.06 });
+  },
+  // Deux tuiles échangées
+  swap: (a) => {
+    tone(a, 330, 0.07, { type: "triangle", volume: 0.2 });
+    tone(a, 440, 0.08, { type: "triangle", volume: 0.2, delay: 0.07 });
+  },
+  // Mouvement refusé
+  refuse: (a) => {
+    tone(a, 150, 0.16, { type: "sawtooth", volume: 0.08 });
+    tone(a, 110, 0.2, { type: "sawtooth", volume: 0.08, delay: 0.09 });
+  },
+  // Indice
+  hint: (a) => {
+    tone(a, 880, 0.12, { volume: 0.1 });
+    tone(a, 1320, 0.2, { volume: 0.08, delay: 0.1 });
+  },
+  // Nouvelle partie
+  newGame: (a) => tone(a, 300, 0.18, { volume: 0.1, slideTo: 600 }),
+  // Cube résolu : arpège puis accord final
+  win: (a) => {
+    [523, 659, 784, 1047].forEach((f, i) => tone(a, f, 0.22, { type: "triangle", volume: 0.15, delay: i * 0.11 }));
+    [523, 659, 784].forEach((f) => tone(a, f, 0.8, { type: "triangle", volume: 0.1, delay: 0.5 }));
+  },
+};
+
+function playSound(name) {
+  if (!options.sound) return;
+  try {
+    const audio = getAudio();
+    if (audio) SOUNDS[name](audio);
+  } catch (e) {
+    // Pas de son disponible : le jeu continue en silence
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -797,11 +874,14 @@ function playMove(src, dst, fromTransform) {
     if (isSolved()) {
       message = "Bravo, le cube est résolu !";
       launchConfetti(now);
+      playSound("win");
     } else {
       message = "";
+      playSound(b ? "swap" : "place");
     }
   } else {
     shake = { ...dst, start: now };
+    playSound("refuse");
     message = "Mouvement refusé : les nombres ne correspondent pas.";
     // Une tuile glissée retourne à sa case
     if (drag && drag.moved) animations.push({ tile: a, from: fromTransform, to: src, start: now });
@@ -813,7 +893,10 @@ function handleClick(hit) {
   if (!hit) {
     selected = null;
   } else if (!selected) {
-    if (hit.board.cells[hit.index]) selected = hit;
+    if (hit.board.cells[hit.index]) {
+      selected = hit;
+      playSound("pick");
+    }
   } else if (sameCell(selected, hit)) {
     selected = null;
   } else {
@@ -845,6 +928,7 @@ canvas.addEventListener("pointermove", (event) => {
     if (!drag.moved && far && drag.src && drag.src.board.cells[drag.src.index]) {
       drag.moved = true;
       selected = drag.src;
+      playSound("pick");
     }
   }
   requestDraw();
@@ -887,6 +971,7 @@ document.getElementById("hint").addEventListener("click", () => {
   const result = computeHint();
   hint = result.cells;
   message = result.text;
+  playSound("hint");
   draw();
 });
 
@@ -955,6 +1040,7 @@ function startNewGame() {
 
 document.getElementById("new-game").addEventListener("click", () => {
   startNewGame();
+  playSound("newGame");
   draw();
 });
 
