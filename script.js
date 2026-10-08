@@ -146,9 +146,7 @@ function newGame(n, faceCount) {
   setupBoards(n, faceCount);
   faces.forEach((face) => (face.solution = []));
   startBoard.cells = generateTiles();
-  selected = null;
-  rejected = null;
-  hint = [];
+  resetUiState();
   message = "";
 }
 
@@ -196,9 +194,7 @@ function loadGame() {
     face.solution = state.faces[i].solution;
   });
   startBoard.cells = state.start;
-  selected = null;
-  rejected = null;
-  hint = [];
+  resetUiState();
   message = isSolved() ? "Bravo, le cube est résolu !" : "";
   return true;
 }
@@ -217,15 +213,16 @@ function cellIsValid(face, index) {
   });
 }
 
-// Déplace (ou échange) la tuile de src vers dst ; annule si le cube devient invalide
-function tryMove(src, dst) {
+// Déplace (ou échange) la tuile de src vers dst ; annule si le cube devient invalide.
+// Avec dryRun, se contente de dire si le mouvement serait accepté.
+function tryMove(src, dst, dryRun = false) {
   const a = src.board.cells[src.index];
   const b = dst.board.cells[dst.index];
   src.board.cells[src.index] = b;
   dst.board.cells[dst.index] = a;
 
   const ok = [src, dst].every((s) => !s.board.cube || cellIsValid(s.board, s.index));
-  if (!ok) {
+  if (!ok || dryRun) {
     src.board.cells[src.index] = a;
     dst.board.cells[dst.index] = b;
   }
@@ -374,13 +371,75 @@ function hitTest(x, y) {
 }
 
 // ---------------------------------------------------------------------------
-// Dessin
+// État de l'interface
 // ---------------------------------------------------------------------------
 
-let selected = null;  // { board, index }
-let rejected = null;  // { board, index, until } : case refusée, affichée en rouge
+let selected = null;   // { board, index } : tuile sélectionnée (clic ou glisser)
+let hover = null;      // { board, index } : case sous le pointeur
+let drag = null;       // { src, startX, startY, x, y, moved } : glisser-déposer en cours
+let shake = null;      // { board, index, start } : case refusée, qui tremble
+let animations = [];   // tuiles en mouvement : { tile, from, to, start }
+let confetti = [];     // particules de l'effet de victoire
 let message = "";
-let hint = [];        // [{ board, index, color }] : cases mises en évidence par l'indice
+let hint = [];         // [{ board, index, color }] : cases mises en évidence par l'indice
+
+const MOVE_DURATION = 250;   // ms
+const SHAKE_DURATION = 450;  // ms
+const DRAG_THRESHOLD = 6;    // px parcourus avant qu'un appui devienne un glisser
+
+function resetUiState() {
+  selected = null;
+  hover = null;
+  drag = null;
+  shake = null;
+  animations = [];
+  confetti = [];
+  hint = [];
+}
+
+const sameCell = (a, b) => a && b && a.board === b.board && a.index === b.index;
+
+// Transformation écran d'une case : son coin et les vecteurs d'une case
+function cellTransform(board, index) {
+  const { origin, u, v } = board.screen;
+  const col = index % board.cols;
+  const row = Math.floor(index / board.cols);
+  return {
+    origin: { x: origin.x + col * u.x + row * v.x, y: origin.y + col * u.y + row * v.y },
+    u,
+    v,
+  };
+}
+
+// Transformation d'une tuile tenue sous le pointeur : un carré à plat, centré
+function pointerTransform(x, y) {
+  const L = startBoard.screen.u.x;
+  return { origin: { x: x - L / 2, y: y - L / 2 }, u: { x: L, y: 0 }, v: { x: 0, y: L } };
+}
+
+function lerpTransform(a, b, t) {
+  const lerp = (p, q) => ({ x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t });
+  return { origin: lerp(a.origin, b.origin), u: lerp(a.u, b.u), v: lerp(a.v, b.v) };
+}
+
+const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+
+// Cases dont la tuile ne doit pas être dessinée à sa place : tuile tenue,
+// ou tuile encore en route vers sa case
+function isHidden(board, index) {
+  if (drag && drag.moved && sameCell(drag.src, { board, index })) return true;
+  return animations.some((a) => sameCell(a.to, { board, index }));
+}
+
+// Cases du cube où la tuile sélectionnée serait acceptée
+function validTargets() {
+  if (!selected) return [];
+  return cubeCells().filter((c) => !sameCell(c, selected) && tryMove(selected, c, true));
+}
+
+// ---------------------------------------------------------------------------
+// Dessin
+// ---------------------------------------------------------------------------
 
 function drawTriangle(x, y, p1, p2, value) {
   const cx = x + TILE / 2;
@@ -420,6 +479,14 @@ function drawTile(tile, col, row) {
   ctx.strokeRect(x, y, TILE, TILE);
 }
 
+// Dessine une tuile selon une transformation écran quelconque
+function drawTileAt(tile, transform) {
+  const { origin, u, v } = transform;
+  ctx.setTransform(u.x / TILE, u.y / TILE, v.x / TILE, v.y / TILE, origin.x, origin.y);
+  drawTile(tile, 0, 0);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+}
+
 function drawEmptyCell(col, row) {
   const x = col * TILE;
   const y = row * TILE;
@@ -430,12 +497,39 @@ function drawEmptyCell(col, row) {
   ctx.strokeRect(x, y, TILE, TILE);
 }
 
-function outlineCell(index, cols, color) {
+function outlineCell(index, cols, color, width = 10) {
   const x = (index % cols) * TILE;
   const y = Math.floor(index / cols) * TILE;
-  ctx.lineWidth = 10;
+  ctx.lineWidth = width;
   ctx.strokeStyle = color;
-  ctx.strokeRect(x + 5, y + 5, TILE - 10, TILE - 10);
+  ctx.strokeRect(x + width / 2, y + width / 2, TILE - width, TILE - width);
+}
+
+function fillCell(index, cols, color) {
+  ctx.fillStyle = color;
+  ctx.fillRect((index % cols) * TILE, Math.floor(index / cols) * TILE, TILE, TILE);
+}
+
+// Bord d'une case, dans le repère local de son plateau
+const SIDE_SEGMENTS = {
+  top: [[0, 0], [TILE, 0]],
+  right: [[TILE, 0], [TILE, TILE]],
+  bottom: [[0, TILE], [TILE, TILE]],
+  left: [[0, 0], [0, TILE]],
+};
+
+function strokeSide(index, cols, side, color) {
+  const x = (index % cols) * TILE;
+  const y = Math.floor(index / cols) * TILE;
+  const [[x1, y1], [x2, y2]] = SIDE_SEGMENTS[side];
+  ctx.beginPath();
+  ctx.moveTo(x + x1, y + y1);
+  ctx.lineTo(x + x2, y + y2);
+  ctx.lineWidth = 14;
+  ctx.lineCap = "round";
+  ctx.strokeStyle = color;
+  ctx.stroke();
+  ctx.lineCap = "butt";
 }
 
 // Pour chaque bord d'une case : position de la case fantôme voisine (dc, dr)
@@ -457,7 +551,7 @@ function drawGhostNeighbors(face) {
   ctx.textBaseline = "middle";
   face.cells.forEach((_, index) => {
     neighbors(face, index)
-      .filter((n) => n.face.view !== face.view && n.face.cells[n.index])
+      .filter((n) => n.face.view !== face.view && n.face.cells[n.index] && !isHidden(n.face, n.index))
       .forEach((n) => {
         const value = n.face.cells[n.index][n.otherSide];
         const [dc, dr, p1, p2] = GHOST_TRIANGLES[n.side];
@@ -472,15 +566,37 @@ function drawGhostNeighbors(face) {
   ctx.restore();
 }
 
-function drawBoard(board) {
+// Survol d'une case du cube : met en évidence ses voisines de l'autre vue
+// et les bords qu'elles partagent. Renvoie [{ board, index, side }] par plateau.
+function hoverLinks() {
+  if (!hover || !hover.board.cube) return [];
+  const links = neighbors(hover.board, hover.index)
+    .filter((n) => n.face.view !== hover.board.view);
+  if (links.length === 0) return [];
+  return [
+    ...links.map((n) => ({ board: hover.board, index: hover.index, side: n.side })),
+    ...links.map((n) => ({ board: n.face, index: n.index, side: n.otherSide })),
+  ];
+}
+
+function drawBoard(board, now, targets, links) {
   const { origin, u, v } = board.screen;
   ctx.setTransform(u.x / TILE, u.y / TILE, v.x / TILE, v.y / TILE, origin.x, origin.y);
 
   board.cells.forEach((tile, i) => {
     const col = i % board.cols;
     const row = Math.floor(i / board.cols);
-    if (tile) drawTile(tile, col, row);
+
+    // La case refusée tremble le long de son axe horizontal
+    let offset = 0;
+    if (shake && sameCell(shake, { board, index: i })) {
+      const t = (now - shake.start) / SHAKE_DURATION;
+      offset = Math.sin(t * Math.PI * 6) * 12 * (1 - t);
+    }
+    ctx.translate(offset, 0);
+    if (tile && !isHidden(board, i)) drawTile(tile, col, row);
     else drawEmptyCell(col, row);
+    ctx.translate(-offset, 0);
   });
 
   // Ombrage pour donner du relief au cube
@@ -491,26 +607,115 @@ function drawBoard(board) {
 
   if (board.cube) drawGhostNeighbors(board);
 
+  // Cases où la tuile sélectionnée peut être posée
+  targets
+    .filter((c) => c.board === board)
+    .forEach((c) => {
+      if (!c.board.cells[c.index]) fillCell(c.index, board.cols, "rgba(80, 230, 120, 0.15)");
+      outlineCell(c.index, board.cols, "rgba(80, 230, 120, 0.45)", 4);
+    });
+
   hint
     .filter((h) => h.board === board)
     .forEach((h) => outlineCell(h.index, board.cols, h.color));
+
+  links
+    .filter((l) => l.board === board)
+    .forEach((l) => {
+      outlineCell(l.index, board.cols, "rgba(255, 230, 80, 0.6)", 6);
+      strokeSide(l.index, board.cols, l.side, "#ffe650");
+    });
+
   if (selected && selected.board === board) {
     outlineCell(selected.index, board.cols, "#fff");
   }
-  if (rejected && rejected.board === board && performance.now() < rejected.until) {
-    outlineCell(rejected.index, board.cols, "#ff3030");
+  if (shake && shake.board === board) {
+    outlineCell(shake.index, board.cols, "#ff3030");
   }
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
-function draw() {
+// ---------------------------------------------------------------------------
+// Effet de victoire : une pluie de confettis aux couleurs des tuiles
+// ---------------------------------------------------------------------------
+
+function launchConfetti(now) {
+  confetti = Array.from({ length: 180 }, () => ({
+    x: Math.random() * canvas.width,
+    y: -20 - Math.random() * canvas.height * 0.5,
+    vx: (Math.random() - 0.5) * 120,
+    vy: 100 + Math.random() * 200,
+    angle: Math.random() * Math.PI,
+    spin: (Math.random() - 0.5) * 10,
+    size: 6 + Math.random() * 8,
+    color: randomItem(COLORS),
+  }));
+  confetti.last = now;
+}
+
+function drawConfetti(now) {
+  if (confetti.length === 0) return;
+  const dt = (now - confetti.last) / 1000;
+  confetti.last = now;
+  confetti.forEach((p) => {
+    p.vy += 150 * dt;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.angle += p.spin * dt;
+    ctx.setTransform(Math.cos(p.angle), Math.sin(p.angle), -Math.sin(p.angle), Math.cos(p.angle), p.x, p.y);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2);
+  });
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (confetti.every((p) => p.y > canvas.height + 20)) confetti = [];
+}
+
+// ---------------------------------------------------------------------------
+// Boucle de dessin : un seul dessin par image, relancé tant qu'il y a une
+// animation en cours
+// ---------------------------------------------------------------------------
+
+let frameRequested = false;
+
+function requestDraw() {
+  if (frameRequested) return;
+  frameRequested = true;
+  requestAnimationFrame((now) => {
+    frameRequested = false;
+    draw(now);
+    if (animations.length > 0 || shake || confetti.length > 0) requestDraw();
+  });
+}
+
+function draw(now = performance.now()) {
+  animations = animations.filter((a) => now - a.start < MOVE_DURATION);
+  if (shake && now - shake.start >= SHAKE_DURATION) shake = null;
+
   const { L, labels } = layout();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = "#222";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  boards.forEach(drawBoard);
+  const targets = validTargets();
+  const links = hoverLinks();
+  boards.forEach((board) => drawBoard(board, now, targets, links));
+
+  // Tuiles en mouvement vers leur nouvelle case
+  animations.forEach((a) => {
+    const t = easeOut((now - a.start) / MOVE_DURATION);
+    drawTileAt(a.tile, lerpTransform(a.from, cellTransform(a.to.board, a.to.index), t));
+  });
+
+  // Tuile tenue sous le pointeur, avec une ombre
+  if (drag && drag.moved) {
+    ctx.save();
+    ctx.shadowColor = "rgba(0, 0, 0, 0.6)";
+    ctx.shadowBlur = 20;
+    ctx.shadowOffsetY = 8;
+    drawTileAt(drag.src.board.cells[drag.src.index], pointerTransform(drag.x, drag.y));
+    ctx.restore();
+  }
 
   const fontSize = Math.round(Math.min(L * 0.4, 24));
   ctx.fillStyle = "#fff";
@@ -524,34 +729,117 @@ function draw() {
     ctx.textAlign = "left";
     ctx.fillText(message, 16, 36);
   }
+
+  drawConfetti(now);
 }
 
 // ---------------------------------------------------------------------------
-// Interaction : un clic sélectionne une tuile, un second clic la pose
-// (déplacement vers une case vide, ou échange avec la tuile présente).
+// Interaction (souris et tactile, via les pointer events) :
+// - un clic sélectionne une tuile, un second clic la pose ;
+// - ou bien on fait glisser la tuile jusqu'à sa case.
+// Poser sur une case vide déplace la tuile, sur une case occupée les échange.
 // ---------------------------------------------------------------------------
 
-canvas.addEventListener("click", (event) => {
-  const rect = canvas.getBoundingClientRect();
-  const hit = hitTest(event.clientX - rect.left, event.clientY - rect.top);
+// Joue le coup src -> dst. fromTransform : position de départ de la tuile
+// déplacée (sa case, ou sous le pointeur si elle a été glissée).
+function playMove(src, dst, fromTransform) {
+  const now = performance.now();
+  const a = src.board.cells[src.index];
+  const b = dst.board.cells[dst.index];
 
+  if (tryMove(src, dst)) {
+    saveGame();
+    animations.push({ tile: a, from: fromTransform, to: dst, start: now });
+    if (b) animations.push({ tile: b, from: cellTransform(dst.board, dst.index), to: src, start: now });
+    selected = null;
+    hint = [];
+    if (isSolved()) {
+      message = "Bravo, le cube est résolu !";
+      launchConfetti(now);
+    } else {
+      message = "";
+    }
+  } else {
+    shake = { ...dst, start: now };
+    message = "Mouvement refusé : les nombres ne correspondent pas.";
+    // Une tuile glissée retourne à sa case
+    if (drag && drag.moved) animations.push({ tile: a, from: fromTransform, to: src, start: now });
+  }
+}
+
+// Clic simple (appui relâché sans glisser)
+function handleClick(hit) {
   if (!hit) {
     selected = null;
   } else if (!selected) {
     if (hit.board.cells[hit.index]) selected = hit;
-  } else if (selected.board === hit.board && selected.index === hit.index) {
+  } else if (sameCell(selected, hit)) {
     selected = null;
-  } else if (tryMove(selected, hit)) {
-    saveGame();
-    selected = null;
-    hint = [];
-    message = isSolved() ? "Bravo, le cube est résolu !" : "";
   } else {
-    rejected = { ...hit, until: performance.now() + 500 };
-    message = "Mouvement refusé : les nombres ne correspondent pas.";
-    setTimeout(draw, 500);
+    playMove(selected, hit, cellTransform(selected.board, selected.index));
   }
-  draw();
+}
+
+function pointerPosition(event) {
+  const rect = canvas.getBoundingClientRect();
+  return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+}
+
+canvas.addEventListener("pointerdown", (event) => {
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  const { x, y } = pointerPosition(event);
+  const hit = hitTest(x, y);
+  drag = { src: hit, startX: x, startY: y, x, y, moved: false };
+  canvas.setPointerCapture(event.pointerId);
+});
+
+canvas.addEventListener("pointermove", (event) => {
+  const { x, y } = pointerPosition(event);
+  hover = hitTest(x, y);
+
+  if (drag) {
+    drag.x = x;
+    drag.y = y;
+    const far = Math.hypot(x - drag.startX, y - drag.startY) > DRAG_THRESHOLD;
+    if (!drag.moved && far && drag.src && drag.src.board.cells[drag.src.index]) {
+      drag.moved = true;
+      selected = drag.src;
+    }
+  }
+  requestDraw();
+});
+
+canvas.addEventListener("pointerup", (event) => {
+  if (!drag) return;
+  const { x, y } = pointerPosition(event);
+  const hit = hitTest(x, y);
+
+  if (!drag.moved) {
+    handleClick(hit);
+  } else if (hit && !sameCell(hit, drag.src)) {
+    playMove(drag.src, hit, pointerTransform(x, y));
+  } else {
+    // Lâchée hors d'une case ou sur sa propre case : la tuile y retourne
+    animations.push({
+      tile: drag.src.board.cells[drag.src.index],
+      from: pointerTransform(x, y),
+      to: drag.src,
+      start: performance.now(),
+    });
+    selected = null;
+  }
+  drag = null;
+  requestDraw();
+});
+
+canvas.addEventListener("pointercancel", () => {
+  drag = null;
+  requestDraw();
+});
+
+canvas.addEventListener("pointerleave", () => {
+  hover = null;
+  requestDraw();
 });
 
 document.getElementById("hint").addEventListener("click", () => {
