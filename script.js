@@ -388,6 +388,13 @@ let message = "";
 let hint = [];         // [{ board, index, color }] : cases mises en évidence par l'indice
 let transparency = false; // mode 6 faces : voir le cube entier en transparence
 
+// Aides visuelles activables dans le panneau Options
+const options = {
+  hoverLinks: false,     // survol : voisines dans l'autre vue
+  validTargets: false,   // cases où la tuile sélectionnée peut être posée
+  ghostNeighbors: true,  // tuiles voisines en transparence au bord des faces
+};
+
 const MOVE_DURATION = 250;   // ms
 const SHAKE_DURATION = 450;  // ms
 const DRAG_THRESHOLD = 6;    // px parcourus avant qu'un appui devienne un glisser
@@ -628,7 +635,7 @@ function drawBoard(board, now, targets, links, tileAlpha = 1) {
     ctx.fillRect(0, 0, board.cols * TILE, board.rows * TILE);
   }
 
-  if (board.cube) drawGhostNeighbors(board);
+  if (board.cube && options.ghostNeighbors) drawGhostNeighbors(board);
 
   // Cases où la tuile sélectionnée peut être posée
   targets
@@ -720,8 +727,8 @@ function draw(now = performance.now()) {
   ctx.fillStyle = "#222";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  const targets = validTargets();
-  const links = hoverLinks();
+  const targets = options.validTargets ? validTargets() : [];
+  const links = options.hoverLinks ? hoverLinks() : [];
   if (transparency && faces.length === 6) {
     // Vue extérieure : les faces du fond apparaissent à travers les faces
     // avant, rendues translucides. Vue intérieure : les faces avant sont
@@ -881,6 +888,34 @@ document.getElementById("hint").addEventListener("click", () => {
   hint = result.cells;
   message = result.text;
   draw();
+});
+
+// Panneau Options : une case à cocher par aide visuelle, mémorisées dans le navigateur
+const OPTIONS_KEY = "cube-tetravex-options";
+
+try {
+  const saved = JSON.parse(localStorage.getItem(OPTIONS_KEY));
+  if (saved) {
+    Object.keys(options).forEach((key) => {
+      if (typeof saved[key] === "boolean") options[key] = saved[key];
+    });
+  }
+} catch (e) {
+  // Stockage indisponible ou illisible : options par défaut
+}
+
+document.querySelectorAll("#options input[data-option]").forEach((input) => {
+  const key = input.dataset.option;
+  input.checked = options[key];
+  input.addEventListener("change", () => {
+    options[key] = input.checked;
+    try {
+      localStorage.setItem(OPTIONS_KEY, JSON.stringify(options));
+    } catch (e) {
+      // Préférences non mémorisées
+    }
+    requestDraw();
+  });
 });
 
 // Bouton transparence : utile seulement avec les 6 faces (2 vues)
